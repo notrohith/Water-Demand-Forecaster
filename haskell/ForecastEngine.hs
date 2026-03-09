@@ -2,7 +2,7 @@ module Main where
 
 import System.Environment (getArgs)
 import Text.Read (readMaybe)
-import Data.List (intercalate)
+import Data.List (intercalate, foldl')
 
 -- The model state containing all necessary variables for the forecasting
 data State = State {
@@ -38,13 +38,15 @@ nextState s =
         newScarcity = min 1.0 (waterScarcity s + (currentDemand * 0.02)) -- Scarcity compounds slowly as demand rises
     in State newPop newInd newAgr newScarcity currentDemand (lag1 s)
 
--- Recursive forecasting function
+-- Forecasting function using foldl' instead of explicit recursion
 forecast :: Int -> State -> [(State, Double)]
-forecast 0 _ = []
-forecast n s = 
-    let demand = baseDemand s
-        s' = nextState s
-    in (s, demand) : forecast (n - 1) s'
+forecast n initialState = 
+    let step (acc, s) _ = 
+            let demand = baseDemand s
+                s' = nextState s
+            in ((s, demand) : acc, s')
+        (reversedHistory, _) = foldl' step ([], initialState) [1..n]
+    in reverse reversedHistory
 
 -- Helper to convert state and demand to a JSON string for Python ingestion
 stateToJSON :: State -> Double -> String
@@ -78,7 +80,8 @@ main = do
             case parseArgs restArgs of
                 Just initialState -> do
                     let predictions = forecast nSteps initialState
-                    let jsonList = map (\(s, d) -> stateToJSON s d) predictions
+                    -- Using foldr to process predictions into JSON strings
+                    let jsonList = foldr (\(s, d) acc -> stateToJSON s d : acc) [] predictions
                     putStrLn $ "[" ++ intercalate ", " jsonList ++ "]"
                 Nothing -> putStrLn "{\"error\": \"Invalid state arguments.\"}"
         _ -> putStrLn "{\"error\": \"Usage: ForecastEngine <steps> <population> <ind> <agr> <scarcity> <lag1> <lag2>\"}"
